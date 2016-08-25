@@ -114,6 +114,10 @@ class BunnyMock
         super
       end
     end
+
+    def wait_for_confirms
+      true
+    end
   end
 
 end
