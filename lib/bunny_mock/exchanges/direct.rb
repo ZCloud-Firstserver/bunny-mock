@@ -18,6 +18,10 @@ module BunnyMock
       def deliver(payload, opts, key)
         @routes[key].each { |route| route.publish payload, opts } if @routes[key]
       end
+
+      def wait_for_confirms
+        true
+      end
     end
   end
 end
