@@ -1,36 +1,170 @@
-# Overview
+Bunny Mock
+==========
 
-This is a brain-dead-simple mock for the `Bunny` class provided by the [bunny gem](https://github.com/ruby-amqp/bunny), which is a synchronous Ruby RabbitMQ client. If you want to mock out RabbitMQ in your tests and are currently using Bunny, this might be the tool for you.
+[![Build Status](https://travis-ci.org/arempe93/bunny-mock.svg?branch=master)](https://travis-ci.org/arempe93/bunny-mock)
+[![Gem Version](https://badge.fury.io/rb/bunny-mock.svg)](https://rubygems.org/gems/bunny-mock)
+[![Coverage Status](https://coveralls.io/repos/arempe93/bunny-mock/badge.svg?branch=master&service=github)](https://coveralls.io/github/arempe93/bunny-mock?branch=master)
+[![Documentation](http://inch-ci.org/github/arempe93/bunny-mock.svg?branch=master)](http://www.rubydoc.info/github/arempe93/bunny-mock)
 
-BunnyMock does not mock all of the methods of Bunny. It currently only mocks the behavior I needed for my immediate needs, which is mainly creating and binding queues and exchanges, and publishing/subscribing messages.
+A mock client for RabbitMQ, modeled after the popular [Bunny client](https://github.com/ruby-amqp/bunny). It currently supports basic usage of Bunny for managing exchanges and queues, with the goal of being able to handle and test all Bunny use cases.
 
-Feel free to fork it to add more behavior mocking and send me a pull request.
+##### Upgrading
 
-# Installation
+This project does its best to follow [semantic versioning practices](http://semver.org/). Check the [CHANGELOG](CHANGELOG.md) to see detailed versioning notes, and [UPGRADING](UPGRADING.md) for notes about major changes or deprecations.
 
-The easiest way to use this is to drop bunny_mock.rb into your `spec/support` directory, or something like that. Just require bunny_mock and then use `BunnyMock.new` instead of `Bunny.new(params)`.
+## Usage
 
-Someday I might package this up as a gem.
+BunnyMock can be injected into your RabbitMQ application in place of Bunny for testing. For example, if you have a helper module named `AMQFactory`, some code similar to the following placed in `spec_helper` or `test_helper` or what have you is all you need to start using BunnyMock to test your RabbitMQ application
+
+```ruby
+require 'bunny-mock'
+
+RSpec.configure do |config|
+  config.before(:each) do
+    AMQFactory.connection = BunnyMock.new.start
+  end
+end
+```
+
+For an example, easy to mock setup, check out [this helper](https://gist.github.com/arempe93/8143edb17c57666e738f)
+
+## Examples
+
+Here are some examples showcasing what BunnyMock can do
+
+#### Declaration
+
+```ruby
+it 'should create queues and exchanges' do
+
+  session = BunnyMock.new.start
+  channel = session.channel
+
+  queue = channel.queue 'queue.test'
+  expect(session.queue_exists?('queue.test')).to be_truthy
+
+  queue.delete
+  expect(session.queue_exists?('queue.test')).to be_falsey
+
+  xchg = channel.exchange 'xchg.test'
+  expect(session.exchange_exists?('xchg.test')).to be_truthy
+
+  xchg.delete
+  expect(session.exchange_exists?('xchg.test')).to be_falsey
+end
+```
+
+#### Publishing
+
+```ruby
+it 'should publish messages to queues' do
+
+  channel = BunnyMock.new.start.channel
+  queue = channel.queue 'queue.test'
+
+  queue.publish 'Testing message', priority: 5
+
+  expect(queue.message_count).to eq(1)
+
+  payload = queue.pop
+  expect(queue.message_count).to eq(0)
+
+  expect(payload[:message]).to eq('Testing message')
+  expect(payload[:options][:priority]).to eq(5)
+end
+
+it 'should route messages from exchanges' do
+
+  channel = BunnyMock.new.start.channel
+
+  xchg = channel.topic 'xchg.topic'
+  queue = channel.queue 'queue.test'
+
+  queue.bind xchg, routing_key: '*.test'
+  xchg.publish 'Routed message', routing_key: 'foo.test'
+
+  expect(queue.message_count).to eq(1)
+  expect(queue.pop[:message]).to eq('Routed message')
+end
+```
+
+#### Binding
+
+```ruby
+it 'should bind queues to exchanges' do
+
+  channel = BunnyMock.new.start.channel
+
+  queue = channel.queue 'queue.test'
+  xchg = channel.exchange 'xchg.test'
+
+  queue.bind xchg
+  expect(queue.bound_to?(xchg)).to be_truthy
+  expect(xchg.routes_to?(queue)).to be_truthy
+
+  queue.unbind xchg
+  expect(queue.bound_to?(xchg)).to be_falsey
+  expect(xchg.routes_to?(queue)).to be_falsey
+
+  queue.bind 'xchg.test'
+  expect(queue.bound_to?(xchg)).to be_truthy
+  expect(xchg.routes_to?(queue)).to be_truthy
+end
+
+it 'should bind exchanges to exchanges' do
+
+  channel = BunnyMock.new.start.channel
+
+  source = channel.exchange 'xchg.source'
+  receiver = channel.exchange 'xchg.receiver'
+
+  receiver.bind source
+  expect(receiver.bound_to?(source)).to be_truthy
+  expect(source.routes_to?(receiver)).to be_truthy
+
+  receiver.unbind source
+  expect(receiver.bound_to?(source)).to be_falsey
+  expect(source.routes_to?(receiver)).to be_falsey
+
+  receiver.bind 'xchg.source'
+  expect(receiver.bound_to?(source)).to be_truthy
+  expect(source.routes_to?(receiver)).to be_truthy
+end
+```
+
+## Other features
+
+This gem was made based on my own use of Bunny in a project. If there are other uses for Bunny that this library does not cover (eg. missing methods, functionality), feel free to open an issue or pull request!
 
 
-# Usage
+## Installation
 
-Since this is intended as a simple way to help test your collaboration with Bunny/RabbitMQ, it does not really opereate as a real queue, but it _does_ support receiving messages into a queue, and reading them out. The main thing to be aware of is that the `BunnyMock::Queue#subscribe` method does not block waiting for messages, consumes all queued messages, and returns when there are no more messages. This differs from the behavior of the real Bunny.
+#### With RubyGems
 
-See the first "integration" test case in `spec/lib/bunny_mock_spec.rb` for a quick example of how to use BunnyMock.
+To install BunnyMock with RubyGems:
 
-# Author
+```
+gem install bunny-mock
+```
 
-Scott W. Bradley - http://scottwb.com
+#### With Bundler
 
-# Contributing
+To use BunnyMock with a Bundler managed project:
 
-* Fork the project.
-* Make your feature addtion or bug fix.
-* Add test for it. This is important so I don't break it in a future version unintentionally.
-* Commit, do not mess with rakefile, version, or history. (If you want to have your own version, that is fine, but bump version in a separate commit by itself so I can ignore it when I pull).
-* Send me a pull request. Bonus points for topic branches.
+```
+gem 'bunny-mock'
+```
 
-# License
+## Documentation
 
-This code is licensed under [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0)
+View the documentation on [RubyDoc](http://www.rubydoc.info/github/arempe93/bunny-mock)
+
+## Dependencies
+
+* [Bunny](https://github.com/ruby-amqp/bunny) - To use original exception classes
+
+* ~~Ruby version >= 2.0 (A requirement of Bunny)~~ Now works with other Ruby versions (even JRuby!) thanks to **[@TimothyMDean](https://github.com/TimothyMDean)**
+
+## License
+
+Released under the MIT license
